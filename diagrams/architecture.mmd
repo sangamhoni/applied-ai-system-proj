@@ -1,0 +1,52 @@
+flowchart TD
+    %% PawPal+ Project 2: Natural-Language Daily Planner — system architecture.
+    %% Shows the main components (agent steps, scheduler, evaluator, tester),
+    %% how data flows input -> process -> output, and where humans / tests check the AI.
+
+    IN([Owner's plain-English request]):::input --> UI["Streamlit UI<br/>(app.py)"]
+    UI --> NL["Agentic planner<br/>(nl_planner.plan_day)"]
+
+    subgraph AGENT ["Agentic workflow — the AI plans, acts, and checks its own work"]
+        direction TB
+        I["1. Interpret (LLM)<br/>Groq Llama 3.3 extracts structured tasks:<br/>pet, duration, priority, time,<br/>deadline, recurrence + confidence"]
+        G["Guardrails<br/>validate JSON, coerce enums,<br/>drop invalid tasks (logged)"]
+        B["2. Build<br/>Owner / Pet / Task objects"]
+        P["3. Plan<br/>Scheduler.generate_plan()<br/>highest priority that fits the time budget"]
+        C["4. Check / Evaluate<br/>conflicts, missed deadlines,<br/>skipped tasks, reliability gate"]
+        R{"5. Review (LLM)<br/>approve or revise?"}
+        E["6. Explain (LLM)<br/>summary of scheduled /<br/>delayed / skipped"]
+
+        I --> G --> B --> P --> C --> R
+        R -->|revise task list| B
+        R -->|approve| E
+    end
+
+    NL --> I
+    E --> OUT([DayPlan: schedule + warnings<br/>+ confidence + explanation]):::output
+    OUT --> UI
+
+    %% Rule-based core, reused unchanged.
+    CORE["Logic layer (pawpal_system.py)<br/>Owner · Pet · Task · Scheduler"]:::core
+    B -. "constructs" .-> CORE
+    P -. "calls" .-> CORE
+
+    %% External model.
+    API["Groq API<br/>(llama-3.3-70b-versatile)<br/>free tier"]:::ext
+    I <-. "JSON-mode request" .-> API
+    R <-. "JSON-mode request" .-> API
+    E <-. "text request" .-> API
+
+    %% Where testing and humans check the AI's results.
+    TEST["Automated tests<br/>(tests/test_nl_planner.py)<br/>fake LLM client, 53 tests"]:::check
+    HUMAN["Human review<br/>(Sangam Subedi):<br/>confidence badge + eval table<br/>in README"]:::check
+    LOG["Logging<br/>(pawpal.nl_planner)<br/>records every step + errors"]:::check
+
+    TEST -. "verify" .-> AGENT
+    HUMAN -. "check outputs" .-> OUT
+    AGENT -. "writes" .-> LOG
+
+    classDef input fill:#e3f2fd,stroke:#1565c0;
+    classDef output fill:#e8f5e9,stroke:#2e7d32;
+    classDef core fill:#fff3e0,stroke:#ef6c00;
+    classDef ext fill:#f3e5f5,stroke:#6a1b9a;
+    classDef check fill:#fce4ec,stroke:#ad1457;

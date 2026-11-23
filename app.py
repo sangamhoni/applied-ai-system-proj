@@ -1,6 +1,12 @@
+import logging
+
 import streamlit as st
 
+from nl_planner import PlannerError, plan_day
 from pawpal_system import Owner, Pet, Scheduler, Task
+
+# Send planner logs to the console so the terminal shows what the AI did each run.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -188,3 +194,112 @@ if st.button("Generate schedule"):
             )
         with st.expander("Why this plan?"):
             st.text(scheduler.explain_plan())
+
+st.divider()
+
+# --- Natural-language planner (Project 2): plain English -> AI -> schedule ---
+st.subheader("🗣️ Natural-language planner")
+st.markdown(
+    "Describe your day in plain English and let the AI build the plan for you. "
+    "It reads your request, pulls out each task (pet, duration, priority, time, "
+    "deadline, recurrence), runs the same scheduler, checks the result, and explains it."
+)
+nl_request = st.text_area(
+    "Your request",
+    height=90,
+    key="nl_request",
+    placeholder=(
+        "I have one hour tonight. Feed both pets, give Pichu medication by 8pm, "
+        "and walk Mochi if there is enough time."
+    ),
+)
+if st.button("Plan with AI"):
+    if not nl_request.strip():
+        st.error("Describe what you need to get done.")
+    else:
+        result = None
+        with st.spinner("Interpreting your request and building a plan…"):
+            try:
+                result = plan_day(
+                    nl_request.strip(),
+                    owner_name=owner.name,
+                    default_minutes=owner.available_minutes,
+                )
+            except PlannerError as error:
+                st.error(f"Could not build a plan: {error}")
+                st.caption(
+                    "Set a free `GROQ_API_KEY` to use the AI planner — get one at "
+                    "https://console.groq.com, then `export GROQ_API_KEY=your_key`."
+                )
+
+        if result is not None:
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Tasks planned", len(result.planned))
+            col2.metric("Minutes used", f"{result.used_minutes()} / {result.available_minutes}")
+            col3.metric("AI revisions", result.iterations - 1)
+            col4.metric("Confidence", f"{result.confidence:.0%}")
+
+            if result.is_reliable():
+                st.success("Reliability check passed: confident extraction, all tasks understood, "
+                           "no missed deadlines.", icon="✅")
+            else:
+                st.warning("Reliability check: low confidence, a task couldn't be understood, or a "
+                           "deadline was missed — double-check the plan below.", icon="⚠️")
+
+            st.markdown(result.explanation)
+
+            if result.planned:
+                st.table(
+                    [
+                        {
+                            "Time": task.time or "—",
+                            "Task": task.title,
+                            "Pet": task.pet_name,
+                            "Minutes": task.duration_minutes,
+                            "Priority": task.priority,
+                        }
+                        for task in scheduler.sort_by_time(result.planned)
+                    ]
+                )
+
+            if result.conflicts:
+                st.warning(
+                    "**Time conflict(s):**\n\n"
+                    + "\n".join(f"- {warning}" for warning in result.conflicts),
+                    icon="⚠️",
+                )
+            if result.missed_deadlines:
+                st.warning(
+                    "**Missed deadline(s):**\n\n"
+                    + "\n".join(f"- {warning}" for warning in result.missed_deadlines),
+                    icon="⏰",
+                )
+            if result.skipped:
+                st.info(
+                    "**Delayed / skipped (not enough time):**\n\n"
+                    + "\n".join(f"- {task.summary()}" for task in result.skipped)
+                )
+            if result.invalid:
+                st.caption("Ignored (couldn't be understood): " + "; ".join(result.invalid))
+
+            with st.expander("What the AI extracted"):
+                st.caption(
+                    f"Available time: {result.available_minutes} minutes · "
+                    f"confidence {result.confidence:.0%}"
+                )
+                if result.assumptions:
+                    st.caption("Assumptions it made: " + "; ".join(result.assumptions))
+                st.table(
+                    [
+                        {
+                            "Task": item.get("title", ""),
+                            "Pet": item.get("pet", ""),
+                            "Minutes": item.get("duration_minutes", ""),
+                            "Priority": item.get("priority", ""),
+                            "Time": item.get("time") or "—",
+                            "Deadline": item.get("deadline") or "—",
+                            "Repeats": item.get("frequency", ""),
+                        }
+                        for item in result.tasks
+                    ]
+                )

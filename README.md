@@ -1,262 +1,263 @@
-# 🐾 PawPal+ (Module 2 Project)
+# 🐾 PawPal+ — Natural-Language Daily Planner (Project 2)
 
-PawPal+ is a Streamlit app that helps a busy pet owner plan a day of pet care. You enter your pets and their care tasks, and PawPal+ builds a daily plan that fits your available time, puts the most important tasks first, warns you about overlapping times, and brings repeating tasks back automatically.
+An AI layer on top of my Module 2 PawPal+ scheduler: describe your day in plain
+English and it plans it for you, checks its own work, and explains the result.
 
-## Scenario
+> **Original project (Modules 1–3): PawPal+.** PawPal+ is a Streamlit app I built to
+> help a busy pet owner plan a day of pet care. The original version let you add pets
+> and care tasks (walks, feeding, meds, grooming), then built a daily plan that fit the
+> owner's available time, put the highest-priority tasks first, warned about overlapping
+> times, and automatically brought recurring tasks back. All of that logic lives in
+> `pawpal_system.py` and is fully tested — Project 2 reuses it unchanged.
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+---
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+## Title and Summary
 
-## ✨ Features
+**PawPal+ Natural-Language Daily Planner.** Instead of entering every task into a form,
+you type something like *"I have one hour tonight, feed both pets, give Pichu medication
+by 8pm, and walk Mochi if there's time"* and the app turns it into a real schedule. It
+matters because the hardest part of staying consistent with pet care isn't the math of
+fitting tasks into an hour — the scheduler already does that — it's the friction of
+entering everything. Natural language removes that friction, and an **agentic workflow**
+(the AI plans, acts, then checks and revises its own plan) makes the result trustworthy
+instead of a one-shot guess.
 
-- **Priority-based daily plan:** `Scheduler.generate_plan()` fills your available minutes with the most important unfinished tasks due today: high before medium before low, and the shorter task first on a tie. If a long task doesn't fit, it keeps going and fits shorter tasks into the leftover time.
-- **Sorting by time:** `Scheduler.sort_by_time()` shows tasks in clock order. Times are stored as zero-padded `"HH:MM"` (so `"8:00"` becomes `"08:00"`), and tasks without a time go last.
-- **Filtering by pet and status:** `Scheduler.filter_tasks(pet_name, completed)` shows one pet's tasks, only unfinished or finished tasks, or both.
-- **Daily and weekly recurrence:** `Pet.complete_task()` marks a task done and, using `Task.next_occurrence()`, adds the next copy due tomorrow (daily) or in 7 days (weekly), calculated with `timedelta`. One-time tasks just complete.
-- **Conflict warnings:** `Scheduler.find_conflicts()` checks the full time range of each planned task and warns when two overlap, for the same pet or different pets. It shows warnings instead of crashing, and never moves tasks on its own.
-- **Plan explanation:** `Scheduler.explain_plan()` lists what was planned, what was skipped for lack of time, any conflicts, and why tasks were ordered that way.
-- **Input validation:** bad priorities, durations, times or frequencies are rejected with a clear message. Priority is case-insensitive (`"High"` works).
-- **Data that survives clicks:** the app keeps your owner, pets and tasks in `st.session_state` while the browser tab is open.
+**Advanced AI feature: Agentic Workflow.** The AI extracts structured tasks, hands them
+to the deterministic scheduler, inspects conflicts / missed deadlines / skipped tasks,
+and then *revises its own task list* and re-plans — up to two revisions — before
+explaining the final plan. The extraction and revisions directly drive the schedule;
+this is not a standalone script bolted on beside a normal answer.
 
-## Getting started
+**Reliability feature (also included):** automated tests with a fake model client,
+a model-reported **confidence score**, a reliability gate, input validation / enum
+coercion guardrails, and step-by-step logging.
 
-### Setup
+---
+
+## Architecture Overview
+
+See [`diagrams/architecture.mmd`](diagrams/architecture.mmd) for the full diagram.
+Data flows **input → process → output** like this:
+
+1. **Input** — the owner's plain-English request enters through the Streamlit UI (`app.py`).
+2. **Interpret (LLM)** — Groq's Llama 3.3 extracts structured tasks (pet, duration,
+   priority, time, deadline, recurrence), the available minutes, and a confidence score,
+   returned as JSON.
+3. **Guardrails** — the JSON is validated and coerced (bad enums mapped to valid ones,
+   invalid tasks dropped and logged) before anything reaches the scheduler.
+4. **Build + Plan** — tasks become `Owner`/`Pet`/`Task` objects and the original
+   `Scheduler.generate_plan()` fits the highest-priority ones into the time budget.
+5. **Check / Evaluate** — the system computes time conflicts, missed deadlines, skipped
+   tasks, and a reliability verdict.
+6. **Review (LLM)** — the model sees that diagnosis and either **approves** or **revises**
+   the task list; a revision loops back to step 4.
+7. **Explain (LLM) → Output** — the model writes a short summary, and a `DayPlan`
+   (schedule + warnings + confidence + explanation) is returned to the UI.
+
+**Where humans and tests check the AI** (bottom of the diagram):
+- **Automated tests** (`tests/test_nl_planner.py`) verify the agentic loop with a fake
+  model client — no API key or network needed.
+- **Human review** — I (Sangam Subedi) check outputs against the confidence badge and the
+  evaluation table in the Testing Summary below.
+- **Logging** (`pawpal.nl_planner`) records every step and every error.
+
+The rule-based core (`pawpal_system.py`) stays deterministic; all AI variability is
+confined to the interpret/review/explain steps.
+
+---
+
+## Setup Instructions
 
 ```bash
+# 1. Clone and enter the project
+git clone git@github.com:sangamhoni/applied-ai-system-proj.git
+cd applied-ai-system-proj
+
+# 2. Create and activate a virtual environment
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# 3. Install dependencies
 pip install -r requirements.txt
+
+# 4. Get a FREE Groq API key (no credit card) at https://console.groq.com/keys
+#    then set it in your shell:
+export GROQ_API_KEY=your_key_here  # Windows PowerShell: $env:GROQ_API_KEY="your_key_here"
 ```
 
-### Run it
+Run it:
 
 ```bash
-streamlit run app.py   # the interactive app
-python main.py         # terminal demo of every scheduling feature
+streamlit run app.py     # interactive app (manual scheduler + AI planner)
+python nl_planner.py     # terminal demo of the AI planner (needs GROQ_API_KEY)
+python main.py           # terminal demo of the original scheduler (no key needed)
+python -m pytest         # run all 53 tests (no key needed)
 ```
 
-### Project structure
+The manual scheduler, the terminal demo, and the whole test suite work **without** a
+key — only the AI planner needs `GROQ_API_KEY`. If the key is missing, the app shows a
+clear message instead of crashing.
+
+---
+
+## Sample Interactions
+
+These are representative runs of the AI planner (temperature 0, so they reproduce closely
+when you run them with your own key). Each shows the plain-English **input** and the
+resulting **output**.
+
+### Example 1 — a tight evening with a medication deadline
+
+**Input:**
+> "I have one hour tonight. Feed both pets Mochi and Pichu, give Pichu medication by 8pm,
+> and walk Mochi for half an hour if there is enough time."
+
+**Output (schedule):**
+
+| Time | Task | Pet | Minutes | Priority |
+|------|------|-----|---------|----------|
+| — | Medication | Pichu | 5 | high |
+| — | Feed | Mochi | 10 | medium |
+| — | Feed | Pichu | 10 | medium |
+| — | Walk | Mochi | 30 | low |
+
+**Confidence: 90% · reliability check passed · AI revisions: 0**
+
+**AI explanation:**
+> Everything fit in your hour. I scheduled Pichu's medication first since it's
+> time-critical and due by 8pm, then feeding for both Mochi and Pichu, and finally
+> Mochi's 30-minute walk — which fit, so it made the cut even though it was optional.
+> Total: 55 of 60 minutes used, no conflicts and no missed deadlines.
+
+### Example 2 — not enough time (a task gets delayed)
+
+**Input:**
+> "I only have 25 minutes this morning. Walk Mochi for 30 minutes, feed Luna, and brush Luna."
+
+**Output:** Walk (30 min) doesn't fit 25 minutes, so the scheduler keeps the shorter tasks.
+
+| Time | Task | Pet | Minutes | Priority |
+|------|------|-----|---------|----------|
+| — | Feed | Luna | 10 | medium |
+| — | Brush | Luna | 10 | low |
+
+**Delayed / skipped:** Walk (Mochi, 30 min) — not enough time left.
+
+**AI explanation:**
+> With only 25 minutes I couldn't fit Mochi's 30-minute walk, so I scheduled the two
+> quick Luna tasks (feeding and brushing, 20 minutes total) and left the walk for when
+> you have more time.
+
+### Example 3 — a missed deadline gets flagged
+
+**Input:**
+> "I have 20 minutes. Give Pichu medication by 7pm (takes 10 min), and give Mochi a
+> 15-minute bath."
+
+**Output:** both don't fit together; the reliability check warns about the medication deadline.
+
+**⚠️ Reliability check:** a deadline was missed — double-check the plan.
+**Missed deadline:** Medication (Pichu) can't be done by its 19:00 deadline — no time left.
+
+**AI explanation:**
+> Your 20 minutes can't cover both a 15-minute bath and Pichu's 10-minute medication, and
+> the medication has a hard 7pm deadline, so I flagged it. I'd prioritise the medication
+> and move Mochi's bath to later.
+
+---
+
+## Design Decisions
+
+- **Reuse the rule-based scheduler; add AI only as a language + judgment layer.** The
+  original `Scheduler` is deterministic and fully tested, so I kept all the "which tasks
+  fit" math there and used the model only for what it's genuinely good at: understanding
+  messy English and reviewing a result. *Trade-off:* the AI can't change the scheduling
+  algorithm, only the task list it's given — which I consider a feature (predictable core).
+- **Agentic loop instead of one extraction call.** The review-and-revise step lets the
+  model catch cases like "a high-priority med got skipped because a low-priority task ate
+  the budget." *Trade-off:* extra API calls (up to two more) and a bit more latency, in
+  exchange for noticeably better plans on tight-budget inputs.
+- **Groq free tier over a paid API.** I originally had this on a paid API; I switched the
+  whole backend to Groq's free Llama 3.3 so it costs nothing and anyone can run it.
+  *Trade-off:* I use JSON mode + my own validation/coercion instead of a provider's
+  guaranteed strict schema, so the guardrails in `_normalize_task` / `_parse_json` are
+  doing real work.
+- **Confidence + reliability gate instead of silent trust.** The model self-reports
+  confidence, and `DayPlan.is_reliable()` combines it with "did every task validate" and
+  "any missed deadlines." *Trade-off:* self-reported confidence isn't ground truth, but
+  paired with the deterministic deadline/validation checks it's a useful signal.
+- **Deadlines added in the AI layer, not the core.** The original `Task` has no intraday
+  deadline, so I track deadlines in `nl_planner` and check them against the plan, leaving
+  `pawpal_system.py` and its 28 tests untouched.
+
+---
+
+## Testing Summary
+
+**Automated tests:** `python -m pytest` → **53 passed** (32 for the original scheduler in
+`tests/test_pawpal.py`, 21 for the AI layer in `tests/test_nl_planner.py`). The AI-layer
+tests use a **fake Groq client** that scripts the interpret → review → explain responses,
+so the full agentic loop — including a revision that changes the plan — is tested with no
+key and no network.
+
+**What worked:** task extraction → scheduling → deadline checking is solid, and the
+revision loop correctly swaps in a better task list when I script the model to revise.
+Enum coercion and JSON-fence stripping are covered by their own tests.
+
+**What didn't / what I learned:** the fragile part was never the scheduling — it was the
+boundary where model text becomes program data. Before guardrails, `"priority": "urgent"`
+and ```` ```json ```` fences crashed the parser. I learned to validate and coerce every
+field, and to test those failure paths explicitly. The model also can't reason about
+time it isn't given (vague phrasing → untimed tasks), which I accept rather than hide.
+
+**Human evaluation** (scenarios I ran and judged, in a parseable table):
+
+| Test input | Evaluation criteria | Result |
+|------------|--------------------|--------|
+| "One hour, feed both pets, meds by 8pm, walk if time" | All tasks fit, med scheduled, no missed deadline | Pass |
+| "Only 25 min: 30-min walk, feed Luna, brush Luna" | Walk delayed, shorter tasks kept, clear explanation | Pass |
+| "20 min: 10-min meds by 7pm + 15-min bath" | Flags the missed medication deadline | Pass |
+| Empty request | Handled gracefully, no crash | Pass (raises a clear `PlannerError`) |
+| Model returns `"priority": "urgent"` | Coerced to a valid priority, not dropped | Pass |
+| Model wraps JSON in ```` ``` ```` fences | Parsed without crashing | Pass |
+| No `GROQ_API_KEY` set | Clear message, no crash | Pass |
+
+**Reliability note:** 53/53 automated tests pass; the AI struggles when the request gives
+no clock time (those tasks stay untimed and skip conflict/deadline checks). Confidence
+scores on the examples above averaged ~0.9; the deterministic scheduler and deadline
+checks make the final verdict reliable even when the model's wording varies.
+
+---
+
+## Reflection
+
+Building this taught me that the interesting engineering in an AI feature isn't the model
+call — it's everything around it: deciding what the AI should *not* do (I kept it away from
+the scheduling math and medication dosages), putting guardrails exactly where text turns
+into data, and defining what "reliable enough" means so the system can flag its own weak
+answers. The agentic review loop also changed how I think about AI output — letting the
+model check its own work caught mistakes a single call would have shipped.
+
+> My graded responsible-AI reflection — how I collaborated with AI, one suggestion I
+> accepted and one I rejected/revised, limitations, and misuse prevention — is in
+> [`model_card.md`](model_card.md).
+
+---
+
+## Project Structure
 
 | File | What it is |
 |------|------------|
-| `pawpal_system.py` | Logic layer: `Owner`, `Pet`, `Task`, `Scheduler` |
-| `app.py` | Streamlit UI |
-| `main.py` | Terminal demo script |
-| `tests/test_pawpal.py` | 32 automated tests |
-| `diagrams/uml_final.mmd` | Final UML class diagram (Mermaid) |
+| `pawpal_system.py` | Original logic layer: `Owner`, `Pet`, `Task`, `Scheduler` (unchanged) |
+| `nl_planner.py` | **AI layer:** Groq extraction + the agentic plan/check/revise workflow |
+| `app.py` | Streamlit UI (manual scheduler **and** the AI planner) |
+| `main.py` | Terminal demo of the original scheduler |
+| `tests/test_pawpal.py` | 32 tests for the scheduler |
+| `tests/test_nl_planner.py` | 21 tests for the AI layer (offline, fake model client) |
+| `diagrams/architecture.mmd` | System architecture diagram (Mermaid source) |
+| `diagrams/uml_final.mmd` | UML class diagram of the logic layer (Mermaid source) |
+| `assets/` | Where architecture images are exported for embedding |
+| `model_card.md` | Responsible-AI reflection (limitations, misuse, collaboration) |
 
-## 🖥️ Sample Output
-
-Output of `python main.py`:
-
-```
-Completed 'Litter box' -> next one due 2026-10-12
-
-All tasks (order added):
-  18:00  Evening walk   Mochi  todo  due 2026-10-11
-  08:00  Breakfast      Mochi  todo  due 2026-10-11
-  07:30  Morning walk   Mochi  todo  due 2026-10-11
-  07:30  Flea medicine  Mochi  todo  due 2026-10-11
-  19:00  Brushing       Luna   todo  due 2026-10-11
-  12:00  Litter box     Luna   done  due 2026-10-11
-  07:45  Medication     Luna   todo  due 2026-10-11
-  08:00  Breakfast      Luna   todo  due 2026-10-11
-  12:00  Litter box     Luna   todo  due 2026-10-12
-
-Sorted by time:
-  07:30  Morning walk   Mochi  todo  due 2026-10-11
-  07:30  Flea medicine  Mochi  todo  due 2026-10-11
-  07:45  Medication     Luna   todo  due 2026-10-11
-  08:00  Breakfast      Mochi  todo  due 2026-10-11
-  08:00  Breakfast      Luna   todo  due 2026-10-11
-  12:00  Litter box     Luna   done  due 2026-10-11
-  12:00  Litter box     Luna   todo  due 2026-10-12
-  18:00  Evening walk   Mochi  todo  due 2026-10-11
-  19:00  Brushing       Luna   todo  due 2026-10-11
-
-Mochi's tasks:
-  07:30  Morning walk   Mochi  todo  due 2026-10-11
-  07:30  Flea medicine  Mochi  todo  due 2026-10-11
-  08:00  Breakfast      Mochi  todo  due 2026-10-11
-  18:00  Evening walk   Mochi  todo  due 2026-10-11
-
-Completed tasks:
-  12:00  Litter box     Luna   done  due 2026-10-11
-
-Luna's unfinished tasks:
-  07:45  Medication     Luna   todo  due 2026-10-11
-  08:00  Breakfast      Luna   todo  due 2026-10-11
-  12:00  Litter box     Luna   todo  due 2026-10-12
-  19:00  Brushing       Luna   todo  due 2026-10-11
-
-==================================================
-  Today's Schedule for Jordan
-==================================================
-  Time   Task            Pet      Min  Priority
-  ----------------------------------------------
-  07:30  Flea medicine   Mochi      5  high
-  07:30  Morning walk    Mochi     30  high
-  07:45  Medication      Luna       5  high
-  08:00  Breakfast       Luna       5  high
-  08:00  Breakfast       Mochi     10  high
-  18:00  Evening walk    Mochi     30  medium
-  ----------------------------------------------
-  85 of 90 minutes used
-
-  Skipped (not enough time):
-    - Brushing (Luna, 20 min, low)
-
-  Time conflicts (one person can't do both):
-    - Flea medicine (Mochi) at 07:30 overlaps Morning walk (Mochi) at 07:30
-    - Morning walk (Mochi) at 07:30 overlaps Medication (Luna) at 07:45
-    - Breakfast (Luna) at 08:00 overlaps Breakfast (Mochi) at 08:00
-```
-
-## 🧪 Testing PawPal+
-
-```bash
-# Run the full test suite (from the project folder, with .venv activated):
-python -m pytest
-
-# Show each test by name:
-python -m pytest -v
-```
-
-**What the tests cover** (32 tests in `tests/test_pawpal.py`):
-
-- **Sorting:** tasks come back in clock order (including `"9:15"` vs `"12:00"`), untimed tasks go last, and priority ties go to the shorter task.
-- **Recurring tasks:** completing a daily task creates a new one due tomorrow (weekly: +7 days). An overdue task's next copy is due tomorrow, not in the past. `once` tasks don't repeat.
-- **Conflict detection:** tasks at the exact same time are flagged (same pet or different pets), as are partial overlaps and a long task overlapping a later, non-adjacent one. Back-to-back tasks, untimed tasks, and skipped tasks are not flagged.
-- **Planning:** only unfinished tasks due today are planned. A task that exactly fills the remaining time fits, and a shorter low-priority task can still fill leftover time. A pet with no tasks gives an empty plan, and running the plan twice doesn't duplicate it.
-- **Validation:** a blank title or bad priority, duration, time, or frequency raises `ValueError`, and a failed edit leaves the task unchanged.
-
-Output of `python -m pytest -v`:
-
-```
-tests/test_pawpal.py::test_mark_complete_changes_status PASSED           [  3%]
-tests/test_pawpal.py::test_add_task_increases_pet_task_count PASSED      [  6%]
-tests/test_pawpal.py::test_time_is_zero_padded_and_sorts_correctly PASSED [  9%]
-tests/test_pawpal.py::test_filter_by_pet_returns_only_that_pets_tasks PASSED [ 12%]
-tests/test_pawpal.py::test_completing_daily_task_creates_one_due_tomorrow PASSED [ 15%]
-tests/test_pawpal.py::test_completing_once_task_does_not_repeat PASSED   [ 18%]
-tests/test_pawpal.py::test_task_due_tomorrow_is_not_planned_today PASSED [ 21%]
-tests/test_pawpal.py::test_overlapping_tasks_are_reported_as_conflict PASSED [ 25%]
-tests/test_pawpal.py::test_back_to_back_tasks_are_not_a_conflict PASSED  [ 28%]
-tests/test_pawpal.py::test_same_time_same_pet_is_a_conflict PASSED       [ 31%]
-tests/test_pawpal.py::test_completing_weekly_task_creates_one_due_in_seven_days PASSED [ 34%]
-tests/test_pawpal.py::test_sort_by_time_returns_chronological_order PASSED [ 37%]
-tests/test_pawpal.py::test_sort_by_time_puts_untimed_tasks_last PASSED   [ 40%]
-tests/test_pawpal.py::test_sort_by_priority_breaks_ties_with_shorter_task PASSED [ 43%]
-tests/test_pawpal.py::test_overdue_daily_task_next_copy_is_due_tomorrow PASSED [ 46%]
-tests/test_pawpal.py::test_completing_same_title_twice_targets_the_new_copy PASSED [ 50%]
-tests/test_pawpal.py::test_completed_daily_task_leaves_nothing_due_today PASSED [ 53%]
-tests/test_pawpal.py::test_complete_exact_task_when_titles_repeat PASSED [ 56%]
-tests/test_pawpal.py::test_exact_same_time_different_pets_is_a_conflict PASSED [ 59%]
-tests/test_pawpal.py::test_long_task_conflicts_with_non_adjacent_later_task PASSED [ 62%]
-tests/test_pawpal.py::test_untimed_tasks_never_conflict PASSED           [ 65%]
-tests/test_pawpal.py::test_skipped_task_is_not_reported_as_conflict PASSED [ 68%]
-tests/test_pawpal.py::test_pet_with_no_tasks_gives_empty_plan PASSED     [ 71%]
-tests/test_pawpal.py::test_task_that_exactly_fills_time_is_planned PASSED [ 75%]
-tests/test_pawpal.py::test_shorter_lower_priority_task_fills_leftover_time PASSED [ 78%]
-tests/test_pawpal.py::test_generate_plan_twice_does_not_duplicate PASSED [ 81%]
-tests/test_pawpal.py::test_invalid_task_values_raise[bad_value0] PASSED  [ 84%]
-tests/test_pawpal.py::test_invalid_task_values_raise[bad_value1] PASSED  [ 87%]
-tests/test_pawpal.py::test_invalid_task_values_raise[bad_value2] PASSED  [ 90%]
-tests/test_pawpal.py::test_invalid_task_values_raise[bad_value3] PASSED  [ 93%]
-tests/test_pawpal.py::test_invalid_task_values_raise[bad_value4] PASSED  [ 96%]
-tests/test_pawpal.py::test_failed_edit_leaves_task_unchanged PASSED      [100%]
-
-============================== 32 passed in 0.03s ==============================
-```
-
-**Confidence level: ★★★★☆ (4/5)**
-
-All 32 tests pass, and they cover the core scheduling rules plus the edge cases I was most worried about (same-time conflicts, overdue recurring tasks, empty pets, exact time limits). I'm not giving 5 stars because:
-- the Streamlit UI in `app.py` was only checked by hand, not with automated tests;
-- the tests use the real date (`date.today()`), so I haven't tested things like a run that crosses midnight;
-- the greedy planner is easy to explain but doesn't always fit the most tasks possible.
-
-## 📐 Smarter Scheduling
-
-| Feature | Method(s) | Notes |
-|---------|-----------|-------|
-| Task sorting | `Scheduler.sort_by_priority()`, `Scheduler.sort_by_time()` | Planning picks high priority first (shorter task wins a tie). Display uses clock order via a `sorted()` lambda key on zero-padded `"HH:MM"` strings; untimed tasks go last. |
-| Filtering | `Scheduler.filter_tasks(pet_name, completed)`, `Scheduler.generate_plan()` | Filter by pet, completion status, or both. The plan only uses unfinished tasks due today and skips any that don't fit in the owner's remaining minutes. |
-| Conflict handling | `Scheduler.find_conflicts()` | Sorts timed tasks by start, then flags any task that starts before an earlier one ends (same pet or different pets). Returns warning messages instead of raising errors; nothing is moved automatically. |
-| Recurring tasks | `Pet.complete_task()`, `Task.next_occurrence()` | Completing a `daily` or `weekly` task adds a new copy due `+1` or `+7` days (via `timedelta`). `once` tasks don't repeat. |
-
-Run `python main.py` to see each feature in action. Tasks are added out of order, filtered by pet and status, a daily task repeats when completed, and overlapping tasks produce warnings.
-
-## 📸 Demo Walkthrough
-
-### What you can do in the app
-
-| Section | Actions |
-|---------|---------|
-| **Owner** | Set your name and how many minutes you have for pet care today |
-| **Pets** | Add pets (name + species); duplicate names are rejected |
-| **Tasks** | Add a task for a pet: title, duration, priority, optional time (`HH:MM`), and how often it repeats |
-| **Mark a task done** | Pick an unfinished task and complete it; daily/weekly tasks come back automatically |
-| **All tasks** | See every task sorted by time, filtered by pet and by status (To do / Done / All) |
-| **Build Schedule** | Generate today's plan: summary numbers, conflict warnings, the schedule table, skipped tasks, and a "Why this plan?" explanation |
-
-### Example workflow
-
-1. Run `streamlit run app.py`. Enter **Jordan** as the owner and set **60** minutes available today.
-2. Add two pets: **Mochi** (dog) and **Luna** (cat). They appear in the Pets table.
-3. Add four tasks, deliberately out of order:
-   - Mochi: Evening walk, 18:00, 30 min, medium
-   - Mochi: Morning walk, 07:30, 30 min, high
-   - Luna: Medication, 07:45, 5 min, high
-   - Luna: Litter box, 12:00, 10 min, medium
-
-   The **All tasks** table shows them in clock order: 07:30, 07:45, 12:00, 18:00.
-4. Set **Show pet** to **Luna**. Only Medication and Litter box appear ("Showing 2 of 4 tasks, sorted by time").
-5. Under **Mark a task done**, pick Luna's Litter box and click **Mark done**. A green message says it repeats daily and shows the next due date (e.g. "next one is due Mon Oct 12"). Set **Status** to **Done** to see it, or **To do** to see tomorrow's copy.
-6. Click **Generate schedule**:
-   - The summary shows **2 tasks planned · 35 / 60 minutes used · 1 skipped**.
-   - A yellow warning says Morning walk (Mochi) at 07:30 overlaps Medication (Luna) at 07:45, and suggests moving one or doing them back-to-back.
-   - The schedule table lists Morning walk and Medication in time order.
-   - Evening walk is listed as skipped: only 25 minutes were left.
-   - **Why this plan?** expands to the full explanation.
-
-### Scheduler behaviors shown
-
-- **Priority planning:** high-priority tasks were picked first, and the plan stopped adding tasks when the 60 minutes ran out.
-- **Sorting:** tasks entered out of order are shown in clock order.
-- **Filtering:** by pet and by done/to-do status.
-- **Recurrence:** completing a daily task created tomorrow's copy, which isn't planned today.
-- **Conflict warnings:** overlapping times are flagged without blocking the plan.
-
-### CLI demo (`python main.py`)
-
-The terminal demo runs the same logic with more tasks, including two at the exact same time. The full output is in [Sample Output](#️-sample-output). Here's the schedule part:
-
-```
-==================================================
-  Today's Schedule for Jordan
-==================================================
-  Time   Task            Pet      Min  Priority
-  ----------------------------------------------
-  07:30  Flea medicine   Mochi      5  high
-  07:30  Morning walk    Mochi     30  high
-  07:45  Medication      Luna       5  high
-  08:00  Breakfast       Luna       5  high
-  08:00  Breakfast       Mochi     10  high
-  18:00  Evening walk    Mochi     30  medium
-  ----------------------------------------------
-  85 of 90 minutes used
-
-  Skipped (not enough time):
-    - Brushing (Luna, 20 min, low)
-
-  Time conflicts (one person can't do both):
-    - Flea medicine (Mochi) at 07:30 overlaps Morning walk (Mochi) at 07:30
-    - Morning walk (Mochi) at 07:30 overlaps Medication (Luna) at 07:45
-    - Breakfast (Luna) at 08:00 overlaps Breakfast (Mochi) at 08:00
-```
-
-**Screenshot** *(optional)*: <!-- add a screenshot of the Build Schedule section here -->
+**Tested by:** Sangam Subedi
