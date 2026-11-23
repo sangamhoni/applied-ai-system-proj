@@ -21,7 +21,7 @@ checks its own work:
     6. explain    - the LLM writes a short summary of what was scheduled, delayed,
                     or skipped.
 
-The model runs on Groq's free API (Llama 3.3). The rule-based core in
+The model runs on Groq's free API (openai/gpt-oss-120b, configurable via GROQ_MODEL). The rule-based core in
 ``pawpal_system.py`` is reused unchanged — this module only adds the language
 layer and the self-correction loop. The SDK is imported lazily so the pure
 helpers below stay importable and testable without the ``groq`` package or a key.
@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from pawpal_system import Owner, Pet, Scheduler, Task
@@ -45,8 +45,10 @@ from pawpal_system import Owner, Pet, Scheduler, Task
 logger = logging.getLogger("pawpal.nl_planner")
 logger.addHandler(logging.NullHandler())  # library-safe default; app/CLI configure output
 
-# Free, fast model on Groq's API.
-MODEL = "llama-3.3-70b-versatile"
+# Free model on Groq's API. Groq's catalog changes over time, so this is overridable
+# via the GROQ_MODEL env var. List what your key can access with:
+#   python -c "from groq import Groq; [print(m.id) for m in Groq().models.list().data]"
+MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 
 # How many times the model may revise the task list before we settle for the last plan.
 MAX_REVISIONS = 2
@@ -142,6 +144,7 @@ class DayPlan:
     confidence: float     # the model's self-reported extraction confidence (0..1)
     assumptions: list[str]
     iterations: int
+    trace: list[str] = field(default_factory=list)  # human-readable step-by-step reasoning trace
 
     def used_minutes(self) -> int:
         """Return the total minutes the planned tasks take."""
@@ -150,6 +153,16 @@ class DayPlan:
     def is_reliable(self) -> bool:
         """Simple reliability gate: confident, understood every task, no missed deadlines."""
         return self.confidence >= 0.6 and not self.invalid and not self.missed_deadlines
+
+    def write_trace(self, path: str) -> str:
+        """Write the agentic reasoning trace to a markdown file; return the path."""
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("\n\n".join(self.trace) + "\n")
+        logger.info("wrote reasoning trace to %s", path)
+        return path
 
 
 # --- Pure helpers (no model needed; covered by tests) ---
@@ -407,7 +420,15 @@ def plan_day(
         raise PlannerError("Please describe what you need to get done.")
 
     client = _client(client)
+    trace: list[str] = [f"# Reasoning trace\n\n**Request:** {request}"]
+
     available, tasks, confidence, assumptions = interpret(request, default_minutes, client)
+    trace.append(
+        f"## Step 1 — interpret (LLM)\n\n"
+        f"- Available: **{available} min** · confidence **{confidence:.2f}**\n"
+        f"- Assumptions: {assumptions or 'none'}\n\n"
+        f"Extracted tasks:\n```json\n{json.dumps(tasks, indent=2)}\n```"
+    )
 
     scheduler: Scheduler | None = None
     missed: list[str] = []
@@ -423,16 +444,20 @@ def plan_day(
                     iterations, len(scheduler.planned_tasks), len(scheduler.skipped_tasks),
                     len(scheduler.conflicts), len(missed), len(invalid))
         diagnostics = _diagnostics_text(scheduler, missed, invalid, available)
+        trace.append(f"## Iteration {iterations} — build + plan + check\n\n```\n{diagnostics}\n```")
 
         if step == max_revisions:
+            trace.append("## Step 5 — review\n\nRevision budget exhausted; keeping this plan.")
             break  # out of revisions; keep this plan
         decision, revised = review(request, tasks, diagnostics, client)
+        trace.append(f"## Step 5 — review (LLM)\n\nDecision: **{decision}**")
         if decision != "revise" or not revised:
             break
         tasks = revised  # loop again with the revised task list
 
     diagnostics = _diagnostics_text(scheduler, missed, invalid, available)
     explanation = explain(request, diagnostics, client)
+    trace.append(f"## Step 6 — explain (LLM)\n\n{explanation}")
 
     plan = DayPlan(
         request=request,
@@ -447,6 +472,7 @@ def plan_day(
         confidence=confidence,
         assumptions=assumptions,
         iterations=iterations,
+        trace=trace,
     )
     logger.info("plan complete: %d planned, %d skipped, reliable=%s",
                 len(plan.planned), len(plan.skipped), plan.is_reliable())
@@ -477,6 +503,8 @@ def _demo() -> None:  # pragma: no cover - manual demo, needs a Groq key
     for warning in plan.missed_deadlines:
         print(f"  deadline: {warning}")
     print(f"\n{plan.explanation}\n")
+    plan.write_trace("logs/last_run.md")
+    print("Reasoning trace written to logs/last_run.md")
 
 
 if __name__ == "__main__":

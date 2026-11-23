@@ -41,7 +41,7 @@ See [`diagrams/architecture.mmd`](diagrams/architecture.mmd) for the full diagra
 Data flows **input → process → output** like this:
 
 1. **Input** — the owner's plain-English request enters through the Streamlit UI (`app.py`).
-2. **Interpret (LLM)** — Groq's Llama 3.3 extracts structured tasks (pet, duration,
+2. **Interpret (LLM)** — Groq's GPT-OSS 120B (an open-weight model) extracts structured tasks (pet, duration,
    priority, time, deadline, recurrence), the available minutes, and a confidence score,
    returned as JSON.
 3. **Guardrails** — the JSON is validated and coerced (bad enums mapped to valid ones,
@@ -92,7 +92,9 @@ Run it:
 streamlit run app.py     # interactive app (manual scheduler + AI planner)
 python nl_planner.py     # terminal demo of the AI planner (needs GROQ_API_KEY)
 python main.py           # terminal demo of the original scheduler (no key needed)
-python -m pytest         # run all 53 tests (no key needed)
+python -m pytest         # run all 54 unit tests (no key needed)
+python evaluate.py       # evaluation harness: 4 scenarios, pass/fail + confidence (no key needed)
+python evaluate.py --live  # same, but against the real Groq model (needs GROQ_API_KEY)
 ```
 
 The manual scheduler, the terminal demo, and the whole test suite work **without** a
@@ -113,22 +115,25 @@ resulting **output**.
 > "I have one hour tonight. Feed both pets Mochi and Pichu, give Pichu medication by 8pm,
 > and walk Mochi for half an hour if there is enough time."
 
-**Output (schedule):**
+**Output (schedule)** — actual run on `openai/gpt-oss-120b`:
 
 | Time | Task | Pet | Minutes | Priority |
 |------|------|-----|---------|----------|
-| — | Medication | Pichu | 5 | high |
-| — | Feed | Mochi | 10 | medium |
-| — | Feed | Pichu | 10 | medium |
-| — | Walk | Mochi | 30 | low |
+| — | Give medication to Pichu | Pichu | 5 | high |
+| — | Feed Mochi | Mochi | 5 | medium |
+| — | Feed Pichu | Pichu | 5 | medium |
+| — | Walk Mochi | Mochi | 30 | low |
 
-**Confidence: 90% · reliability check passed · AI revisions: 0**
+**Available: 60 min · used: 45 min · confidence: 95% · reliability check passed · AI revisions: 0**
 
 **AI explanation:**
-> Everything fit in your hour. I scheduled Pichu's medication first since it's
-> time-critical and due by 8pm, then feeding for both Mochi and Pichu, and finally
-> Mochi's 30-minute walk — which fit, so it made the cut even though it was optional.
-> Total: 55 of 60 minutes used, no conflicts and no missed deadlines.
+> You have a full hour to take care of both Mochi and Pichu. First, give Pichu its
+> medication (about 5 minutes), then feed Mochi (5 minutes) and feed Pichu (5 minutes).
+> That leaves roughly 45 minutes, so you can comfortably fit a 30‑minute walk for Mochi
+> afterward.
+>
+> All tasks fit within the 60‑minute window, there are no time conflicts, and no
+> deadlines were missed, so everything is on track. Enjoy your time with the pets!
 
 ### Example 2 — not enough time (a task gets delayed)
 
@@ -149,21 +154,21 @@ resulting **output**.
 > quick Luna tasks (feeding and brushing, 20 minutes total) and left the walk for when
 > you have more time.
 
-### Example 3 — a missed deadline gets flagged
+### Example 3 — a late-finishing task misses its deadline
 
 **Input:**
-> "I have 20 minutes. Give Pichu medication by 7pm (takes 10 min), and give Mochi a
-> 15-minute bath."
+> "I have two hours tonight. Groom Mochi starting at 7pm for 90 minutes, and it needs to be
+> done by 8pm."
 
-**Output:** both don't fit together; the reliability check warns about the medication deadline.
+**Output:** the grooming fits the two-hour budget, but starting at 7pm it runs to 8:30pm —
+past the 8pm deadline — so the reliability check flags it.
 
 **⚠️ Reliability check:** a deadline was missed — double-check the plan.
-**Missed deadline:** Medication (Pichu) can't be done by its 19:00 deadline — no time left.
+**Missed deadline:** Grooming (Mochi) finishes at 20:30, past its 20:00 deadline.
 
 **AI explanation:**
-> Your 20 minutes can't cover both a 15-minute bath and Pichu's 10-minute medication, and
-> the medication has a hard 7pm deadline, so I flagged it. I'd prioritise the medication
-> and move Mochi's bath to later.
+> Mochi's grooming fits your two hours, but starting at 7pm it finishes at 8:30pm — half an
+> hour past your 8pm deadline. Start it by 6:30pm, or shorten the session, to make the cutoff.
 
 ---
 
@@ -179,7 +184,7 @@ resulting **output**.
   the budget." *Trade-off:* extra API calls (up to two more) and a bit more latency, in
   exchange for noticeably better plans on tight-budget inputs.
 - **Groq free tier over a paid API.** I originally had this on a paid API; I switched the
-  whole backend to Groq's free Llama 3.3 so it costs nothing and anyone can run it.
+  whole backend to Groq's free GPT-OSS 120B so it costs nothing and anyone can run it.
   *Trade-off:* I use JSON mode + my own validation/coercion instead of a provider's
   guaranteed strict schema, so the guardrails in `_normalize_task` / `_parse_json` are
   doing real work.
@@ -195,11 +200,35 @@ resulting **output**.
 
 ## Testing Summary
 
-**Automated tests:** `python -m pytest` → **53 passed** (32 for the original scheduler in
-`tests/test_pawpal.py`, 21 for the AI layer in `tests/test_nl_planner.py`). The AI-layer
+**Automated tests:** `python -m pytest` → **54 passed** (32 for the original scheduler in
+`tests/test_pawpal.py`, 22 for the AI layer in `tests/test_nl_planner.py`). The AI-layer
 tests use a **fake Groq client** that scripts the interpret → review → explain responses,
 so the full agentic loop — including a revision that changes the plan — is tested with no
 key and no network.
+
+**Evaluation harness:** `python evaluate.py` runs the full planner over four predefined
+requests and prints a pass/fail + confidence summary. It runs **offline and deterministic by
+default** (scripted model responses, no key needed), so anyone can reproduce it; add `--live`
+to evaluate against the real Groq model. Actual output:
+
+```text
+PawPal+ planner evaluation — mode: OFFLINE (scripted, deterministic)
+================================================================
+[PASS] Everything fits the hour
+        expected: medication planned, nothing skipped, reliable
+        planned=['Feed', 'Medication', 'Walk'] skipped=[] conflicts=0 missed=0 confidence=0.90 reliable=True
+[PASS] Not enough time delays the long walk
+        expected: 30-min walk skipped, shorter tasks kept
+        planned=['Brush', 'Feed'] skipped=['Walk'] conflicts=0 missed=0 confidence=0.90 reliable=True
+[PASS] Late-finishing task misses its deadline
+        expected: deadline miss flagged, reliability gate fails
+        planned=['Grooming'] skipped=[] conflicts=0 missed=1 confidence=0.90 reliable=False
+[PASS] Overlapping times are caught as a conflict
+        expected: time conflict detected
+        planned=['Feed'] skipped=[] conflicts=1 missed=0 confidence=0.90 reliable=True
+================================================================
+Result: 4/4 passed · average confidence 0.90
+```
 
 **What worked:** task extraction → scheduling → deadline checking is solid, and the
 revision loop correctly swaps in a better task list when I script the model to revise.
@@ -223,7 +252,7 @@ time it isn't given (vague phrasing → untimed tasks), which I accept rather th
 | Model wraps JSON in ```` ``` ```` fences | Parsed without crashing | Pass |
 | No `GROQ_API_KEY` set | Clear message, no crash | Pass |
 
-**Reliability note:** 53/53 automated tests pass; the AI struggles when the request gives
+**Reliability note:** 54/54 automated tests pass; the AI struggles when the request gives
 no clock time (those tasks stay untimed and skip conflict/deadline checks). Confidence
 scores on the examples above averaged ~0.9; the deterministic scheduler and deadline
 checks make the final verdict reliable even when the model's wording varies.
@@ -253,8 +282,11 @@ model check its own work caught mistakes a single call would have shipped.
 | `nl_planner.py` | **AI layer:** Groq extraction + the agentic plan/check/revise workflow |
 | `app.py` | Streamlit UI (manual scheduler **and** the AI planner) |
 | `main.py` | Terminal demo of the original scheduler |
+| `evaluate.py` | Evaluation harness: 4 scenarios → pass/fail + confidence summary |
 | `tests/test_pawpal.py` | 32 tests for the scheduler |
-| `tests/test_nl_planner.py` | 21 tests for the AI layer (offline, fake model client) |
+| `tests/test_nl_planner.py` | 22 tests for the AI layer (offline, fake model client) |
+| `ai_interactions.md` | Agent workflow notes + a saved reasoning trace |
+| `logs/last_run.md` | Latest run's reasoning trace (regenerated each run) |
 | `diagrams/architecture.mmd` | System architecture diagram (Mermaid source) |
 | `diagrams/uml_final.mmd` | UML class diagram of the logic layer (Mermaid source) |
 | `assets/` | Where architecture images are exported for embedding |

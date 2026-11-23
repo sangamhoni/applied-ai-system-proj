@@ -228,6 +228,19 @@ def test_plan_day_rejects_empty_request():
         plan_day("   ", client=_FakeGroq(_extraction(30, [])))
 
 
+def test_plan_day_records_a_reasoning_trace(tmp_path):
+    tasks = [_task("Walk", "Mochi", 30, "high")]
+    client = _FakeGroq(_extraction(60, tasks))
+
+    plan = plan_day("walk the dog", owner_name="Sangam", default_minutes=60, client=client)
+
+    assert plan.trace  # non-empty
+    assert any("interpret" in section for section in plan.trace)
+    out = tmp_path / "trace.md"
+    plan.write_trace(str(out))
+    assert out.read_text().startswith("# Reasoning trace")
+
+
 def test_parse_json_tolerates_code_fences():
     assert nl_planner._parse_json('```json\n{"a": 1}\n```') == {"a": 1}
 

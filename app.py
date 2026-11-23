@@ -233,6 +233,8 @@ if st.button("Plan with AI"):
                 )
 
         if result is not None:
+            result.write_trace("logs/last_run.md")  # save the agent's reasoning trace
+
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Tasks planned", len(result.planned))
             col2.metric("Minutes used", f"{result.used_minutes()} / {result.available_minutes}")

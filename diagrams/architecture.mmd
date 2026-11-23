@@ -8,7 +8,7 @@ flowchart TD
 
     subgraph AGENT ["Agentic workflow — the AI plans, acts, and checks its own work"]
         direction TB
-        I["1. Interpret (LLM)<br/>Groq Llama 3.3 extracts structured tasks:<br/>pet, duration, priority, time,<br/>deadline, recurrence + confidence"]
+        I["1. Interpret (LLM)<br/>Groq GPT-OSS 120B extracts structured tasks:<br/>pet, duration, priority, time,<br/>deadline, recurrence + confidence"]
         G["Guardrails<br/>validate JSON, coerce enums,<br/>drop invalid tasks (logged)"]
         B["2. Build<br/>Owner / Pet / Task objects"]
         P["3. Plan<br/>Scheduler.generate_plan()<br/>highest priority that fits the time budget"]
@@ -31,13 +31,13 @@ flowchart TD
     P -. "calls" .-> CORE
 
     %% External model.
-    API["Groq API<br/>(llama-3.3-70b-versatile)<br/>free tier"]:::ext
+    API["Groq API<br/>(openai/gpt-oss-120b)<br/>free tier"]:::ext
     I <-. "JSON-mode request" .-> API
     R <-. "JSON-mode request" .-> API
     E <-. "text request" .-> API
 
     %% Where testing and humans check the AI's results.
-    TEST["Automated tests<br/>(tests/test_nl_planner.py)<br/>fake LLM client, 53 tests"]:::check
+    TEST["Automated tests + eval harness<br/>(tests/, evaluate.py)<br/>fake LLM client · 54 tests · 4 scenarios"]:::check
     HUMAN["Human review<br/>(Sangam Subedi):<br/>confidence badge + eval table<br/>in README"]:::check
     LOG["Logging<br/>(pawpal.nl_planner)<br/>records every step + errors"]:::check
 

@@ -1,10 +1,10 @@
 # Model Card — PawPal+ Natural-Language Daily Planner
 
 **Author:** Sangam Subedi
-**System:** A natural-language pet-care day planner that uses Groq's Llama 3.3 (70B)
-to turn a plain-English request into structured tasks, then drives a rule-based
-scheduler and lets the model review and revise its own plan.
-**Model used:** `llama-3.3-70b-versatile` via the Groq API (free tier), temperature 0.
+**System:** A natural-language pet-care day planner that uses Groq's GPT-OSS 120B
+(an open-weight model) to turn a plain-English request into structured tasks, then
+drives a rule-based scheduler and lets the model review and revise its own plan.
+**Model used:** `openai/gpt-oss-120b` via the Groq API (free tier), temperature 0.
 
 ---
 
@@ -88,7 +88,7 @@ decisions and corrected it where it went wrong.
 - **A suggestion I did not accept as written:** the assistant first implemented the
   whole thing on Anthropic's Claude API. I rejected that — not because it was wrong, but
   because the Anthropic API has no free tier and I won't pay for a class project. I had
-  it switch the entire backend to Groq's free Llama 3.3 instead, which meant moving from
+  it switch the entire backend to Groq's free GPT-OSS 120B instead, which meant moving from
   Anthropic's "strict tool use" to Groq's JSON mode plus my own validation and coercion.
   That trade-off cost me a little robustness (I validate the schema myself now instead of
   the API guaranteeing it) in exchange for being genuinely free and reproducible for
@@ -99,3 +99,18 @@ decisions and corrected it where it went wrong.
 What I learned: the AI is excellent at producing a working first draft fast, but the
 judgment calls — cost, scope, where to put the guardrails, what "reliable enough" means
 — were mine to make, and those are what actually shaped the system.
+
+## Future improvements
+
+- **A smarter scheduler.** The core uses a greedy "highest priority that fits" rule, which
+  doesn't always pack the most tasks into the time. A small optimizer (e.g. a knapsack-style
+  fill) would plan tighter days.
+- **Real time-of-day placement.** Right now untimed tasks skip conflict and deadline checks.
+  I'd have the planner assign reasonable start times so every task participates in those checks.
+- **Multi-day and calendar awareness.** Extend from one day to a week, and account for
+  travel/transition time between tasks instead of treating duration as the only cost.
+- **Measured confidence, not just self-reported.** I'd calibrate the model's confidence
+  against the evaluation harness (does low confidence actually correlate with wrong plans?)
+  and fold conflicts/missed-deadlines more formally into a single reliability score.
+- **Persist schedules.** Today everything lives in session state; saving plans would make it
+  a real daily tool rather than a one-shot planner.
