@@ -1,0 +1,55 @@
+classDiagram
+    %% PawPal+ UML draft (Phase 2). Revisit in Phase 6 so it matches the final implementation.
+
+    class Owner {
+        +str name
+        +int available_minutes
+        +list~Pet~ pets
+        +add_pet(pet: Pet) None
+        +remove_pet(pet_name: str) None
+        +get_all_tasks() list~Task~
+    }
+
+    class Pet {
+        +str name
+        +str species
+        +list~Task~ tasks
+        +add_task(task: Task) None
+        +remove_task(title: str) None
+        +edit_task(title: str, duration_minutes: int, priority: str) None
+        +complete_task(title: str) Task
+    }
+
+    class Task {
+        +str title
+        +int duration_minutes
+        +str priority
+        +str time
+        +str frequency
+        +bool completed
+        +str pet_name
+        +date due_date
+        +priority_rank() int
+        +mark_complete() None
+        +start_minutes() int
+        +next_occurrence() Task
+        +summary() str
+    }
+
+    class Scheduler {
+        +Owner owner
+        +list~Task~ planned_tasks
+        +list~Task~ skipped_tasks
+        +list~str~ conflicts
+        +generate_plan() list~Task~
+        +filter_tasks(pet_name: str, completed: bool) list~Task~
+        +sort_by_priority(tasks: list~Task~) list~Task~
+        +sort_by_time(tasks: list~Task~) list~Task~
+        +find_conflicts(tasks: list~Task~) list~str~
+        +explain_plan() str
+    }
+
+    Owner "1" o-- "0..*" Pet : has
+    Pet "1" *-- "0..*" Task : needs
+    Scheduler "1" --> "1" Owner : plans for
+    Scheduler ..> Task : orders and selects
